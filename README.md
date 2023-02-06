@@ -8,7 +8,7 @@ Visual analysis is the primary method of analyzing single-case research data, ye
 
 ## Current Repository Status
 
-Code is being cleaned and prepared for populating this repository by 5 February 2023.
+This repository was populated on 6 February 2023. There is a *Data* folder with two CSV files that are required to run the analyses. There is a *Functions* folder with two functions that are sourced into the analyses. The *Analysis* folder contains the three main R Notebook files, one for each of the three main questions investigated in the study. All results were produced using R scripts and code chunks while running R version 4.2.2, *Innocent and Trusting*, with RStudio version 2022.12.0.
 
 ## Contact
 

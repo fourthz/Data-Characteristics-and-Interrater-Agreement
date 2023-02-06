@@ -1,0 +1,555 @@
+---
+title: "Visual Analysis Expert Agreement Influences"
+author: "Michael A. Seaman"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(here)
+library(tidyverse)
+library(MASS)
+library(gridExtra)
+```
+
+### Data Preparation
+
+In this section I read in the data and create variables for use in the analysis. Note that the data are assumed to be in a *Data* folder within the home project folder.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Read in the data
+
+VA <- read_csv(here("Data", "VAStudyData.csv"),
+               col_types = list(
+                 Graph = col_factor(),
+                 True = col_factor(),
+                 ExpertA = col_integer(),
+                 ExpertB = col_integer(),
+                 ExpertC = col_integer(),
+                 ExpertD = col_integer(),
+                 ExpertE = col_integer(),
+                 CDC = col_factor(),
+                 MachineL = col_factor(),
+                 Autocorrelation = col_factor(),
+                 Trend = col_factor(),
+                 Variability = col_factor(),
+                 PointsA = col_factor(),
+                 PointsB = col_factor(),
+                 EffectSize = col_integer()))
+
+# Create an agreement variable that ranges from 3 to 5.
+
+VA$Agree <- VA$ExpertA + VA$ExpertB + VA$ExpertC + VA$ExpertD + VA$ExpertE
+VA$Agree <- ifelse(VA$Agree > 2, VA$Agree, (5 - VA$Agree))
+
+# Original re-coding of the Agree variable to represent three agreement levels
+
+VA <- VA %>%
+  mutate(True = fct_recode(True, "No" = "0", "Yes" = "1")) %>%
+  mutate(True = relevel(True, "No")) %>%
+  mutate(Agree = factor(Agree,
+                        levels = c(3, 4, 5),
+                        labels = c("Low", "Medium", "High")))
+
+# After initial exploration, literature review, and discussion, re-coded factor levels for agree
+# as a binary "yes" (4 or 5 raters agree) or "no" (only 3 raters agree) factor
+
+VA <- VA %>%
+  mutate(Agree = fct_recode(Agree,
+                            "No" = "Low",
+                            "Yes" = "Medium",
+                            "Yes" = "High"))
+```
+
+### Simple Logistic Regression for Individual Effects
+
+We will look at how much certain graphical characteristics appear to influence expert agreement using *Agree* as the response variable, with values of "agree" (at least four of the five raters agree) and "not agree" (three raters disagree with two raters).
+
+Here are the frequencies and proportions of agree (and disagree) across all graphs.
+
+```{r}
+VA %>%
+  group_by(Agree) %>%
+  summarize(n = n()) %>%
+  mutate(prop = n /sum(n))
+```
+
+Now I will begin to look at agreement as a function of the individual effects in the study design, beginning with *autocorrelation*.
+
+Let's look at the agreement frequencies and proportions, but separately for when there is no autocorrelation and when there is autocorrelation.
+
+```{r}
+VA %>%
+  group_by(Autocorrelation, Agree) %>%
+  summarize(n = n(), .groups = "drop_last") %>%
+  mutate(prop = n /sum(n))
+```
+
+So here are the odds of agreement when there is no autocorrelation.
+
+```{r}
+407/105
+```
+Here are the odds of agreement when there is autocorrelation.
+
+```{r}
+394/118
+```
+
+Here is the odds ratio of agreement with autocorrelation to no autocorrelation.
+
+```{r}
+(394/118)/(407/105)
+```
+
+We can calculate the percent change in agreement like this.
+
+```{r}
+((394/118)/(407/105)) - 1
+```
+
+This indicates a 14% decrease in agreement when we added autocorrelation. We can obtain these same numbers using the *glm()* function.
+
+```{r}
+model_auto <- glm(Agree ~ Autocorrelation,
+                  family = binomial(link = "logit"),
+                  data = VA)
+
+summary(model_auto)
+writeLines("\n")
+
+exp(cbind("Odds ratio" = coef(model_auto),
+          confint.default(model_auto, level = 0.95)))
+```
+
+Taking the exponent of the intercept provides the baseline odds of agreement when there is no autocorrelation (3.876). The odds ratio with autocorrelation to this baseline is given by taking the exponent of the parameter estimate for autocorrelation in the model (0.861). If we want the odds of agreement when there is autocorrelation, we can simply multiply this ratio by the odds of agreement at baseline.
+
+```{r}
+unname(exp(coef(model_auto)[1]) * exp(coef(model_auto)[2]))
+```
+If an autocorrelation of 0.2 is added to the outcomes there is a 14% drop in the odds of agreement, though this result is not stable enough to infer with a strong degree of confidence (p = 0.325).
+
+I find it easier to use a consistent interpretation in which the odds are always increased. We can do this here by changing the baseline to autocorrelation, then taking the odds with no autocorrelation compared to the odds with autocorrelation.
+
+```{r}
+VA <- VA %>%
+  mutate(Autocorrelation = relevel(Autocorrelation, "0.2"))
+
+model_auto <- glm(Agree ~ Autocorrelation,
+                  family = binomial(link = "logit"),
+                  data = VA)
+
+summary(model_auto)
+writeLines("\n")
+
+exp(cbind("Odds ratio" = coef(model_auto),
+          confint.default(model_auto, level = 0.95)))
+```
+
+The interpretation here is that we increase the odds of agreement by 16% if we remove the autocorrelation.
+
+Let's do this all again using a homemade function. The function is assumed to be in a *Functions* folder in the home directory.
+
+```{r}
+source(here("Functions", "main_odds.R"))
+```
+
+Here are the odds for autocorrelation.
+
+```{r}
+main_odds(model_auto)
+```
+
+Next I look at *trend*.
+
+```{r}
+model_trend <- glm(Agree ~ Trend,
+                  family = binomial(link = "logit"),
+                  data = VA)
+
+summary(model_trend)
+writeLines("\n")
+
+exp(cbind("Odds ratio" = coef(model_trend),
+          confint.default(model_trend, level = 0.95)))
+```
+
+The addition of a 30-degree rotated trend results in a 55% drop in the odds of agreement, with strong evidence of a result that will be stable across repeated sampling (p < .01).
+
+```{r}
+main_odds(model_trend)
+```
+
+Next a look at *variability* of the points.
+
+```{r}
+model_var <- glm(Agree ~ Variability,
+                 family = binomial(link = "logit"),
+                 data = VA)
+
+summary(model_var)
+writeLines("\n")
+
+exp(cbind("Odds ratio" = coef(model_var),
+          confint.default(model_var, level = 0.95)))
+```
+
+The odds of agreement increase by 33% when the relative variation of the points is increased from 0.10 to 0.25. This result is reasonably stable (p = 0.06).
+
+```{r}
+main_odds(model_var)
+```
+
+Next we see the effects of varying the number of *points in phase A*.
+
+```{r}
+model_A_points <- glm(Agree ~ PointsA,
+                      family = binomial(link = "logit"),
+                      data = VA)
+
+summary(model_A_points)
+writeLines("\n")
+
+exp(cbind("Odds ratio" = coef(model_A_points),
+          confint.default(model_A_points, level = 0.95)))
+```
+
+Adding two more points in the baseline phase (from three to five points) results in a 20% decrease in the odds of agreement, though this result is not stable enough to infer with a strong degree of confidence (p = 0.15).
+
+```{r}
+main_odds(model_A_points)
+```
+
+Next we see the effects of varying the number of *points in phase B*.
+
+```{r}
+model_B_points <- glm(Agree ~ PointsB,
+                      family = binomial(link = "logit"),
+                      data = VA)
+
+summary(model_B_points)
+writeLines("\n")
+
+exp(cbind("Odds ratio" = coef(model_B_points),
+          confint.default(model_B_points, level = 0.95)))
+```
+
+Adding five more points in the intervention phase (from five to 10 points) results in only a 3% decrease in the odds of agreement, and the result is not stable enough to infer with any reasonable degree of confidence (p = 0.82).
+
+```{r}
+main_odds(model_B_points)
+```
+
+Finally, we look at the impact of changing the *effect size*.
+
+```{r}
+model_ES <- glm(Agree ~ EffectSize,
+                family = binomial(link = "logit"),
+                data = VA)
+
+summary(model_ES)
+writeLines("\n")
+
+exp(cbind("Odds ratio" = coef(model_ES),
+          confint.default(model_ES, level = 0.95)))
+```
+
+Assuming a linear relationship of the effect to the log of the odds of agreement, there is very little relationship of effect to agreement. Every increase of one standardized mean difference decreases the odds by 7%, a slight decrease (p = 0.07). We have no strong reason to assume that the relationship is linear, so I am going to explore this further.
+
+Let's look at the proportion in each of the agreement categories, sorted by the effect size.
+
+```{r paged.print=FALSE}
+VA_ES_Factor <- VA %>%
+  mutate(ES_Factor = factor(EffectSize))
+
+VA_ES_Factor <- VA_ES_Factor %>%
+  group_by(ES_Factor, Agree) %>%
+  summarize(ES_Agree_N = n(),
+            .groups = "drop")
+
+VA_ES_Factor <- VA_ES_Factor %>%
+  group_by(ES_Factor) %>%
+  mutate(ES_N = sum(ES_Agree_N))
+
+VA_ES_Factor <- VA_ES_Factor %>%
+  group_by(ES_Factor, Agree) %>%
+  summarize(Prop = ES_Agree_N / ES_N,
+            .groups = "drop")
+
+print(VA_ES_Factor, n = nrow(VA_ES_Factor))
+```
+
+The relationship is **not** linear. Highest agreement is when there is no effect (85% agreement). There is also higher agreement when the effect is large (standardized mean differences of 4 or 5) at 80% agreement. Agreement is lower for standardized mean differences of 1 (70%), 2 (70%), and 3 (68%). For a point of reference, recall that overall agreement across all graphs was 78%.
+
+Here is a graph to illustrate the curvilinear trend. It is primarily a quadratic trend.
+
+```{r}
+Effect_Size <- c(0:5)
+Prop_Agree <- VA_ES_Factor$Prop[c(2,4,6,8,10,12)]
+ES_Agree_df <- data.frame(Effect_Size, Prop_Agree)
+
+ggplot(ES_Agree_df, aes(x = Effect_Size, y = Prop_Agree)) +
+  theme_bw()+
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2), se = FALSE) +
+  labs(x = "Effect Size", y = "Proportion Agreement") +
+  theme(axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0))) +
+  theme(axis.title.x = element_text(margin = margin(t = 20, r = 0, b = 0, l = 0)))
+
+```
+
+In sum, and perhaps not surprisingly, agreement is strong when there is clearly a strong effect or the complete absence of an effect, but agreement is relatively weaker when there is a moderate effect.
+
+To calculate the odds ratio for effect size using a simple linear relationship, based on the above outcomes I created a new effect size variable in which the nature of the effect (none or high) is "none_high" (effect sizes of 0, 4, or 5) or "moderate" (effect sizes of 1, 2, or 3).
+
+```{r}
+VA <- VA %>%
+  mutate(ES_Factor = factor(EffectSize))
+
+VA <- VA %>%
+  mutate(ES_Factor = fct_collapse(ES_Factor,
+                                  moderate = c("1", "2", "3"),
+                                  none_high = c("0", "4", "5")))
+  
+VA <- VA %>%
+  mutate(ES_Factor = relevel(ES_Factor, "moderate"))
+
+model_ES <- glm(Agree ~ ES_Factor,
+                family = binomial(link = "logit"),
+                data = VA)
+
+summary(model_ES)
+writeLines("\n")
+
+exp(cbind("Odds ratio" = coef(model_ES),
+          confint.default(model_ES, level = 0.95)))
+```
+
+When there is no effect or a high effect, the odds of agreement increase by 120%. This is a very stable outcome that leads to strong evidence that we can make inferences to a broader population (p < 0.01).
+
+```{r}
+main_odds(model_ES)
+```
+
+We can put it all together and graphically see the results in the following forest plot.
+
+```{r}
+plot_data <- data.frame(
+  Index = 1:6,
+  label = c("Autocorrelation (none vs 0.2)",
+            "Trend (none vs 30 degree rotation)",
+            "Relative Variation of Points (0.1 vs 0.25)",
+            "Baseline Number of Points (3 vs 5)",
+            "Intervention Number of Points (5 vs 10)",
+            "Effect Size (moderate vs none or high)"),
+  OR = c(0.86, 0.45, 1.33, 0.80, 0.97, 2.21),
+  LL = c(0.64, 0.33, 0.99, 0.60, 0.72, 1.63),
+  UL = c(1.16, 0.62, 1.80, 1.08, 1.30, 2.98),
+  CI = c("0.64, 1.16", "0.33, 0.62", "0.99, 1.80", "0.60, 1.08", "0.72, 1.30", "1.63, 2.98")
+)
+
+f_plot <- ggplot(plot_data, aes(y = Index, x = OR)) +
+  geom_point(shape = 18, size = 5) +  
+  geom_errorbarh(aes(xmin = LL, xmax = UL), height = 0.25) +
+  geom_vline(xintercept = 1, color = "red", linetype = "dashed", cex = 1, alpha = 0.5) +
+  scale_y_continuous(name = "", breaks=1:6, labels = plot_data$label, trans = "reverse") +
+  xlab("Odds Ratio (95% CI)") + 
+  ylab(" ") + 
+  theme_bw() +
+  theme(panel.border = element_blank(),
+        panel.background = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black"),
+        axis.text.y = element_text(size = 12, colour = "black"),
+        axis.text.x.bottom = element_text(size = 12, colour = "black"),
+        axis.title.x = element_text(size = 12, colour = "black"))
+f_plot
+```
+
+Here is the plot again, this time adding the statistics to the plot.
+
+```{r}
+table_base <- ggplot(plot_data, aes(y=label)) +
+  ylab(NULL) + xlab("  ") + 
+  theme(plot.title = element_text(hjust = 0.5, size=12), 
+        axis.text.x = element_text(color="white", hjust = -3, size = 25),
+        axis.line = element_blank(),
+        axis.text.y = element_blank(), 
+        axis.ticks = element_blank(),
+        axis.title.y = element_blank(), 
+        legend.position = "none",
+        panel.background = element_blank(), 
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        plot.background = element_blank())
+
+tab1 <- table_base + 
+  labs(title = "space") +
+  geom_text(aes(y = rev(Index),
+                x = 1,
+                label = sprintf("%0.2f", round(OR, digits = 2))), size = 4) +
+  ggtitle("OR")
+
+tab2 <- table_base +
+  geom_text(aes(y = rev(Index), x = 1, label = CI), size = 4) + 
+  ggtitle("95% CI")
+
+lay <-  matrix(c(1,1,1,1,1,1,1,1,1,1,2,3,3), nrow = 1)
+
+grid.arrange(f_plot, tab1, tab2, layout_matrix = lay)
+```
+
+I created the odds ratios and accompanying graph with the idea of a "natural transition" in a "positive" direction. For example, 0 to 0.2 with autocorrelation, 0 to 30 with trend, and so on. In looking at this graph, however, I think it will be misleading to some readers. To exemplify what I
+mean, look at the trend effect vs the effect size effect. Readers may perceive that the effect size is the dominant effect, but actually these two effects are about the same. The illusion is because the range is restricted from 0 to 1 on one side of the dotted line, but unrestricted on the other. I can solve this problem by always creating positive odds ratios, rather than using the changes that seem to move in the positive direction. That is what I am doing below.
+
+First, swapping autocorrelation the autocorrelation direction from 0.2 to 0.
+
+```{r}
+VA <- VA %>%
+  mutate(Autocorrelation = relevel(Autocorrelation, "0.2"))
+
+model_auto <- glm(Agree ~ Autocorrelation,
+                  family = binomial(link = "logit"),
+                  data = VA)
+
+summary(model_auto)
+writeLines("\n")
+
+exp(cbind("Odds ratio" = coef(model_auto),
+          confint.default(model_auto, level = 0.95)))
+```
+
+When we switch from autocorrelation of 0.2 to no autocorrelation, the odds of agreement increase by 16%. There is not enough evidence to infer this across replications or the population of experts (p = 0.32).
+
+Next, I switch trend from 30% rotation to no trend.
+
+```{r}
+VA <- VA %>%
+  mutate(Trend = relevel(Trend, "30"))
+
+
+model_trend <- glm(Agree ~ Trend,
+                  family = binomial(link = "logit"),
+                  data = VA)
+
+summary(model_trend)
+writeLines("\n")
+
+exp(cbind("Odds ratio" = coef(model_trend),
+          confint.default(model_trend, level = 0.95)))
+```
+
+When we eliminate the 30% rotation in trend, the odds of agreement increase by 120% and we can infer this beyond this study (p < .01).
+
+Then I switch the order of the baseline number of points.
+
+```{r}
+VA <- VA %>%
+  mutate(PointsA = relevel(PointsA, "5"))
+
+
+model_A_points <- glm(Agree ~ PointsA,
+                      family = binomial(link = "logit"),
+                      data = VA)
+
+summary(model_A_points)
+writeLines("\n")
+
+exp(cbind("Odds ratio" = coef(model_A_points),
+          confint.default(model_A_points, level = 0.95)))
+
+```
+
+A reduction in the number of points at baseline from 5 to 3 increased the odds by 25%, but this is not a stable enough effect to make strong inferences (p = 0.15).
+
+Finally, I switch the order of the intervention number of points.
+
+```{r}
+VA <- VA %>%
+  mutate(PointsB = relevel(PointsB, "10"))
+
+
+model_B_points <- glm(Agree ~ PointsB,
+                      family = binomial(link = "logit"),
+                      data = VA)
+
+summary(model_B_points)
+writeLines("\n")
+
+exp(cbind("Odds ratio" = coef(model_B_points),
+          confint.default(model_B_points, level = 0.95)))
+
+```
+
+A reduction in the number of points in the intervention phase from 10 to 5 increased the odds by 3%. This is very little and not a stable enough effect to make inferences (p = 0.82).
+
+Now the revised graph.
+
+```{r}
+plot_data <- data.frame(
+  Index = 1:6,
+  label = c("Autocorrelation (0.2 vs none)",
+            "Trend (30 degree rotation vs none)",
+            "Relative Variation of Points (0.1 vs 0.25)",
+            "Baseline Number of Points (5 vs 3)",
+            "Intervention Number of Points (10 vs 5)",            
+            "Effect Size (moderate vs none or high)"),
+  OR = c(1.16, 2.20, 1.33, 1.24, 1.03, 2.21),
+  LL = c(0.86, 1.62, 0.99, 0.92, 0.77, 1.63),
+  UL = c(1.56, 2.99, 1.80, 1.68, 1.39, 2.98),
+  CI = c("0.86, 1.56", "1.62, 2.99", "0.99, 1.80", "0.92, 1.68", "0.77, 1.39", "1.63, 2.98")
+)
+
+f_plot <- ggplot(plot_data, aes(y = Index, x = OR)) +
+  geom_point(shape = 18, size = 5) +  
+  geom_errorbarh(aes(xmin = LL, xmax = UL), height = 0.25) +
+  geom_vline(xintercept = 1, color = "red", linetype = "dashed", cex = 1, alpha = 0.5) +
+  scale_y_continuous(name = "", breaks=1:6, labels = plot_data$label, trans = "reverse") +
+  xlab("Odds Ratio (95% CI)") + 
+  ylab(" ") + 
+  theme_bw() +
+  theme(panel.border = element_blank(),
+        panel.background = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black"),
+        axis.text.y = element_text(size = 12, colour = "black"),
+        axis.text.x.bottom = element_text(size = 12, colour = "black"),
+        axis.title.x = element_text(size = 12, colour = "black"))
+
+table_base <- ggplot(plot_data, aes(y=label)) +
+  ylab(NULL) + xlab("  ") + 
+  theme(plot.title = element_text(hjust = 0.5, size=12), 
+        axis.text.x = element_text(color="white", hjust = -3, size = 25),
+        axis.line = element_blank(),
+        axis.text.y = element_blank(), 
+        axis.ticks = element_blank(),
+        axis.title.y = element_blank(), 
+        legend.position = "none",
+        panel.background = element_blank(), 
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        plot.background = element_blank())
+
+tab1 <- table_base + 
+  labs(title = "space") +
+  geom_text(aes(y = rev(Index),
+                x = 1,
+                label = sprintf("%0.2f", round(OR, digits = 2))), size = 4) +
+  ggtitle("OR")
+
+tab2 <- table_base +
+  geom_text(aes(y = rev(Index), x = 1, label = CI), size = 4) + 
+  ggtitle("95% CI")
+
+lay <-  matrix(c(1,1,1,1,1,1,1,1,1,1,2,3,3), nrow = 1)
+
+grid.arrange(f_plot, tab1, tab2, layout_matrix = lay)
+```
+
+The most pronounced ways to obtain agreement is to remove the trend rotation and to have an effect size that is absent or high, rather than moderate. There are small increases in agreement when removing an autocorrelation, increasing the variation in points, or decreasing the number of baseline points. In each of these cases our ability to make inferences will be with reduced levels of confidence than the inferences we can make about trend and effect sizes.

@@ -1,0 +1,175 @@
+---
+title: "Visual Analysis Model Comparisons"
+author: "Michael A. Seaman"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(here)
+library(tidyverse)
+```
+
+### Data Preparation
+
+In this section I read in the data and create variables for use in the analysis. Note that the data are assumed to be in a *Data* folder within the home project folder.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Read in the data
+
+VA <- read_csv(here("Data", "VAStudyData.csv"),
+               col_types = list(
+                 Graph = col_factor(),
+                 True = col_factor(),
+                 ExpertA = col_integer(),
+                 ExpertB = col_integer(),
+                 ExpertC = col_integer(),
+                 ExpertD = col_integer(),
+                 ExpertE = col_integer(),
+                 CDC = col_factor(),
+                 MachineL = col_factor(),
+                 Autocorrelation = col_factor(),
+                 Trend = col_factor(),
+                 Variability = col_factor(),
+                 PointsA = col_factor(),
+                 PointsB = col_factor(),
+                 EffectSize = col_integer()))
+
+# Create an agreement variable that ranges from 3 to 5.
+
+VA$Agree <- VA$ExpertA + VA$ExpertB + VA$ExpertC + VA$ExpertD + VA$ExpertE
+VA$Agree <- ifelse(VA$Agree > 2, VA$Agree, (5 - VA$Agree))
+
+# Original re-coding of the Agree variable to represent three agreement levels
+
+VA <- VA %>%
+  mutate(True = fct_recode(True, "No" = "0", "Yes" = "1")) %>%
+  mutate(True = relevel(True, "No")) %>%
+  mutate(Agree = factor(Agree,
+                        levels = c(3, 4, 5),
+                        labels = c("Low", "Medium", "High")))
+
+# After initial exploration, literature review, and discussion, re-coded factor levels for agree
+# as a binary "yes" (4 or 5 raters agree) or "no" (only 3 raters agree) factor
+
+VA <- VA %>%
+  mutate(Agree = fct_recode(Agree,
+                            "No" = "Low",
+                            "Yes" = "Medium",
+                            "Yes" = "High"))
+
+VA <- VA %>%
+  mutate(ES_Factor = factor(EffectSize))
+
+VA <- VA %>%
+  mutate(ES_Factor = fct_collapse(ES_Factor,
+                                  moderate = c("1", "2", "3"),
+                                  none_high = c("0", "4", "5")))
+
+VA <- VA %>%
+  mutate(ES_Factor = relevel(ES_Factor, "moderate"))
+```
+
+
+### Logistic Regression for Larger Models
+
+In a separate analysis we determined that there was little or no evidence of one variable moderating the effect of another variable. Thus, in this section we will look at larger models, beginning with all of the variables together in a full model, to see how the effect of variables in the presence of other variables.
+
+```{r}
+model_full <- glm(Agree ~ Autocorrelation + Trend + Variability + PointsA +
+                          PointsB + ES_Factor,
+                  family = binomial(link = "logit"),
+                  data = VA)
+
+summary(model_full)
+writeLines("\n")
+
+exp(cbind("Odds ratio" = coef(model_full),
+          confint.default(model_full, level = 0.95)))
+```
+
+Trend and effect size are clearly influencing rater agreement. To a lesser extent, variability has an influence as well, though not nearly as pronounced and not stable enough to ensure, with 95% confidence, that it is influencing agreement. The AIC is 1027.
+
+I next kept just three variables in the model.
+
+```{r}
+model_three_var <- glm(Agree ~ Trend + Variability + ES_Factor,
+                   family = binomial(link = "logit"),
+                   data = VA)
+
+summary(model_three_var)
+writeLines("\n")
+
+exp(cbind("Odds ratio" = coef(model_three_var),
+          confint.default(model_three_var, level = 0.95)))
+```
+
+The results are almost identical, suggesting little overlap of the variance of the explanatory variables with the response variable. The AIC has decreased to 1024, suggesting that this is a more informative model, especially given the smaller number of explanatory variables.
+
+Finally, I constructed a model with just trend and effect size as predictors.
+
+```{r}
+model_two_var <- glm(Agree ~ Trend + ES_Factor,
+                     family = binomial(link = "logit"),
+                     data = VA)
+
+summary(model_two_var)
+writeLines("\n")
+
+exp(cbind("Odds ratio" = coef(model_two_var),
+          confint.default(model_two_var, level = 0.95)))
+```
+
+The estimates of effect are similar and the estimates remain stable. The AIC has increased slightly, to 1026.
+
+In sum, trend and whether or not the effect is obvious are the two factors influencing agreement, with variability of points also vying as an influential factor, but not statistically significant when using a maximum Type I error rate of 0.05. All of these results parallel what we saw for each individual univariate analysis.
+
+In least-squares regression we might look at $R^2$ to tell us how much of the total variation is explained by our model. Logistic regression uses maximum likelihood estimation, rather than least squares, so we do not have $R^2$. That said, quite a few "pseudo r-squared" statistics have been proposed as a means of determining the value of a model. We are going to use one of the most readily understood such statistics, the count $R^2$ because it provides direct information about how well the model does in predicting expert agreement.
+
+Logistic regression uses model parameters, in our case, graphic characteristics, to provide an estimated probability that our experts will agree. This is a continuous response variable ranging from 0 (no chance of agreement) to 1 (the experts will certainly agree). Our actual response, however, is binary (agree or disagree). To convert the probability of agreement to a prediction of agreement, it is common and logical to predict agreement when the probability of agreement is above some cut-off value, such as 0.5, or 50\%. Similarly, we predict disagreement when the probability is below a chosen cut-off value. The count $R^2$ is the proportion of total number of observations for which we make a correct prediction.
+
+In an arena in which we anticipate as much disagreement as agreement (e.g., for untrained raters) a cut-off value of 0.5 would be reasonable. In this study, however, experts were employed to rate each graph. Indeed, in 78% of the 1024 graphs the experts reached agreement. Thus it make more sense in this study to employ 0.78 as the cut-off probability when predicting agreement or disagreement so as to weight this decision in favor of agreement, consistent with what we observed across all the graphs. Indeed, 0.78 is also the average of all predicted probabilities for these data.
+
+We predicted agreement for the same three models compared with the AIC: the full model, a three parameter model, and a two parameter model. Here is the count $R^2$ for all three models.
+
+```{r}
+# Set baseline
+
+cut_off <- sum(VA$Agree == "Yes") / length(VA$Agree)
+
+# Full model
+
+VA$predict_f <- predict(model_full, data = VA, type = "response")
+VA$correct_f <- ((VA$predict_f >= cut_off & VA$Agree == "Yes") |
+                 (VA$predict_f < cut_off & VA$Agree == "No"))
+
+# Three variable model
+
+VA$predict_3 <- predict(model_three_var, data = VA, type = "response")
+VA$correct_3 <- ((VA$predict_3 >= cut_off & VA$Agree == "Yes") |
+                 (VA$predict_3 < cut_off & VA$Agree == "No"))
+
+# Two variable model
+
+VA$predict_2 <- predict(model_two_var, data = VA, type = "response")
+VA$correct_2 <- ((VA$predict_2 >= cut_off & VA$Agree == "Yes") |
+                 (VA$predict_2 < cut_off & VA$Agree == "No"))
+
+# Full model count R_sqr
+
+sum(VA$correct_f) / length(VA$Agree)
+
+# Three variable count R_sqr
+
+sum(VA$correct_3) / length(VA$Agree)
+
+# Two variable count R_sqr
+
+sum(VA$correct_2) / length(VA$Agree)
+```
+
+The count $R^2$ for the full model, three-variable model, and two-variable model, respectively, are 0.62, 0.61, and 0.47.
+
+The AIC and the count $R^2$ both point to a three-variable model that includes trend, effect size, and variability.
